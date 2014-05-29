@@ -1,19 +1,23 @@
 /**
- *  A CMD module loader
+ *  jNode, a CMD module loader
  *
  *  Usage:
- *  jNode.setup(settings);
+ *  jNode.setup({paths: {}, alias: {}});
  *  jNode.require('uri1, uri2', callbcak);
+ *  
+ *  Copyright(c) 2014 Vip Inc.
+ *  Copyright(c) 2014 Cherish Peng<cherish.peng@vipshop.com>
+ *  MIT Licensed   
  */
 (function(global) {
     var
     jNode = {},
     defaults = {
-        path: {},
+        paths: {},
         alias: {}
     },
+    slice = [].slice,
     settings = _extend({}, defaults),
-
     moduleType = {
         'js': 'script', 'json': 'script',
         'css': 'style',
@@ -24,10 +28,8 @@
     router = {},
     eventRegistry = {},
 
-    slice = [].slice,
-    create = document.createElement,
     head = document.getElementsByTagName('head')[0],
-    base = document.getElementsByTagName('base')[0] || head.appendChild(create('base')),
+    base = document.getElementsByTagName('base')[0] || head.appendChild(document.createElement('base')),
     baseURI = document.baseURI || base.href || document.URL,
     dynamicURIResolveSupported = (_parse('').href !== ''),
 
@@ -47,12 +49,12 @@
     global.jNode = jNode;
 
     // Add default transport
-    // You can also refer below structure to add other transports, eg: audio/video, archives, office, adobe etc
+    // You can also refer below structure to add other transports, eg: audio, video, archives, office, adobe etc
     _forEach({ 'script': 'script', 'style': 'link', 'image': 'img', 'document': 'iframe' }, function(element, type) {
         transport(type, function(module) {
-            var object = create(element), count = 0;
+            var object = document.createElement(element);
             return {
-                create: function() {
+                send: function() {
                     if (type === 'style') {
                         object.rel = 'stylesheet';
                         object.href = module.uri;
@@ -72,24 +74,24 @@
                 }
             };
             function callback() {
-                var DOC = (object.tagName.toUpperCase() === 'IFRAME'), IMG = (object.tagName.toUpperCase() === 'IMG');
+                var IFRAME = (object.tagName.toUpperCase() === 'IFRAME'), IMG = (object.tagName.toUpperCase() === 'IMG');
                 if (!object.readyState || /loaded|complete/.test(object.readyState)) {
-                    if (!count++) {
-                        // 404 error or non-standard CMD module
-                        if (DOC)
-                            module.exports = object.contentWindow.document.body.innerHTML;
-                        else if (IMG)
-                            module.exports = object;
+                    if (IFRAME)
+                        module.exports = object.contentWindow.document.body.innerHTML;
+                    else if (IMG)
+                        module.exports = object;
+                    // 404 error, Non-Standard CMD module or Non-JS module
+                    if (module.status === 1) {
+                        module.status = 4;
+                        module.statusText = 'COMPLETE';
+                        module.resolve(module);
+                    }
 
-                        if (module.status !== 2)
-                            module.reject(module);
-
-                        object.onreadystatechange = object.onload = object.onerror = null;
-                        if (!IMG) {
-                            if (object.parentNode)
-                                object.parentNode.removeChild(object);
-                            object = null;
-                        }
+                    object.onreadystatechange = object.onload = object.onerror = null;
+                    if (!IMG) { // Append img to document is not necessary
+                        if (object.parentNode)
+                            object.parentNode.removeChild(object);
+                        object = null;
                     }
                 }
             }
@@ -111,13 +113,19 @@
 
             // Begin with path
             i = uri.indexOf('/');
-            if ((path = settings.path[uri.substring(0, ~i ? i : uri.length)]))
+            if ((path = settings.paths[uri.substring(0, ~i ? i : uri.length)]))
                 uri = path + uri.substring(i);
 
             orig = base.href;
-            base.href = baseURI;
+            base.href = baseURI; // A trick for getting a URL's component
             a1 = _parse(uri);
             base.href = orig; // Restore
+            
+            // No-Search(dynamic URL) and No-Ext
+            if (!a1.search && !~a1.pathname.indexOf('.')) {
+                uri += '.js';
+            }
+            
             // IE always return ":" as the default value
             if (a1.protocol !== ':') { // Absolute uri
                 uri = a1.href;
@@ -138,10 +146,9 @@
         }
         // Fire "resolve" event, then you can customize the resolved uri
         event = Event(EVENT_RESOLVE);
-        jNode.fire(event, uri);
+        fire.call(null, event, uri); // It's not recommened to use the jNode.fire is exported to external
         if (typeof event.result === 'string')
             uri = event.result;
-
         return uri;
     }
 
@@ -191,7 +198,9 @@
         if (module.status === 2) return;
 
         // Fire "define" event, may be you want to customize the behavior of "define"
-        if (!jNode.fire(EVENT_DEFINE, id, dependencies, factory))
+        // window.fn = function() { console.log(1); };
+        // (function(fn){ this[fn](); }).call(null, ['fn']) will output "1" in Chrome
+        if (!fire.call({}, EVENT_DEFINE, id, dependencies, factory))
             return;
         // factory source code
         code = factory.toString();
@@ -200,7 +209,7 @@
             dependencies = [];
             // Fire "beforedependenciesready" event, may be you want to add some alias to "require"
             event = Event(EVENT_BEFORE_DEPENDENCIES_READY);
-            jNode.fire(event, code);
+            fire.call(null, event, code);
             // Extract module dependencies
             while (RE_DEPENDENCIES.exec(code))
                 dependencies.push(RegExp.$1);
@@ -224,6 +233,7 @@
             exports = factory(function() {
                 require.apply(module, arguments);
             }, module.exports, module);
+
             // Which dependencies defer to request at factory runtime
             delayWaitings = dependencies.length - waitings;
             _when(delayWaitings ? _require(dependencies.slice(waitings)) : true).always(function() {
@@ -234,7 +244,7 @@
             });
 
             // Fire "ready" event, then you can depend on this module securely
-            jNode.fire(EVENT_READY, module);
+            fire.call(null, EVENT_READY, module);
         });
     }
     define.cmd = true;
@@ -253,19 +263,19 @@
 
     // The background "Hero" of jNode.require, require, require.async
     function _require(uri, callback, type) {
+        type = type || [];
         if (typeof uri === 'string')
             uri = uri.split(RE_DELIMITER_COMMA);
         if (typeof type === 'string')
             type = type.split(RE_DELIMITER_COMMA);
 
         var
-        module,
         cache = Module.instances,
-        baseuri = this.uri || baseURI;
-        promised = _when(function() {
-            var deferreds = [];
+        baseuri = this.uri || baseURI, 
+        deferreds = [];
+        deferred = _when(function() {
             _forEach(uri, function(v, i) {
-                module = cache((uri[i] = resolve(v, baseuri)));
+                var module = cache[(uri[i] = resolve(v, baseuri))];
                 deferreds.push(module || _createModule(uri[i], type[i]));
             });
             return deferreds;
@@ -280,7 +290,7 @@
         });
         // Runtime dependencies
         if (this instanceof Module) this.dependencies.push(uri);
-        return promised;
+        return deferred;
     }
 
     /**
@@ -297,8 +307,8 @@
         this.statusText = 'UNINITIALIZED';
         this.dependencies = module.dependencies || [];
         this.exports = module.exports || {};
-        _extend(this, Deferred().promise());
-        Module.instances[uri] = this;
+        _extend(this, _Deferred()); // It's very important to copy a deferred
+        Module.instances[this.uri] = this;
     }
     Module.instances = {};
 
@@ -306,7 +316,7 @@
     function transport(type, structure) {
         // Add or override
         var add = !type.indexOf('+') && (type = type.substring(1));
-        if (transports[type]) transports[type] = [];
+        if (!transports[type]) transports[type] = [];
         transports[type] = (!add) ? [structure] : transports[type].push(structure);
     }
 
@@ -318,20 +328,168 @@
 
         if (!type) {
             pathname = _parse(uri).pathname;
-            ext = pathname.substring(pathname.lastIndexOf('.') + 1 || pathname.length);
-            type = moduleType[ext] || 'script';
+            ext = pathname.substring(pathname.lastIndexOf('.') + 1 || pathname.length);        
+            type = moduleType[ext];
         }
+        
         module.type = type;
         module.status = 1;
         module.statusText = 'LOADING';
 
         for (i in transports[type]) {
             transport = transports[type][i](module);
-            transport.create();
+            transport.send();
         }
         return module;
     }
 
+    /**
+     *  jNode utilities
+     *  Because thoes utilities don't exposed to external environment,
+     *  so we assume all arguments are security as we expected
+     */
+    // A simple implementing of jQuery.Deferred
+    // * Deferreds's always is diff from Deferred's always, until all the Deferreds are resolved or rejected, then execute always callbacks
+    function _Deferred(constructor) {
+        if (!(this instanceof _Deferred))
+            return new _Deferred(constructor);
+
+        var
+        deferred = this, promised = {}, 
+        callbacks = {"resolve": [], "reject": [], "always": []}, proto, 
+        map = {"resolve": "done", "reject": "fail"},
+        state = 'pending', // States: pending, resolved, rejected
+        event, trigger, addDoneFail;
+
+        for (trigger in map) {
+            event = map[trigger];
+            _(trigger);
+            function _(trigger) {
+                // Events: done, fail
+                deferred[event] = promised[event] = function (callback) {
+                    _addCallback(trigger, callback);
+                    return this;
+                };
+                //  Trigger: resolve, reject
+                deferred[trigger] = function() {
+                    var
+                    reject = (trigger === 'reject'),
+                    resolve = !reject,
+                    deferreds = deferred.deferreds,
+                    pending, always, queues, fn, key;
+
+                    if (deferreds) {
+                        for (key in deferreds) {
+                            if (!deferreds[key].state || deferreds[key].state() !== 'pending')
+                                continue;
+                            pending = true;
+                        }
+                        if (resolve && pending) {
+                            return;
+                        }
+                        if (reject && pending) {
+                            queues = callbacks.reject;
+                        }
+                    }
+                    
+                    if (!deferreds || !pending) {
+                        always = true;
+                        queues = callbacks[trigger].concat(callbacks.always);
+                    }
+
+                    if (!queues.length)
+                        return;
+
+                    callbacks[trigger] = [];
+                    always && (callbacks.always = []);
+                    // State: resolved or rejected
+                    if (!deferreds || always) {
+                        state = trigger + (reject ? 'ed' : 'd');
+                    }                    
+                    while ((fn = queues.shift())) {
+                        fn.apply(deferred, arguments);
+                    }
+                };
+            }
+        }
+        proto = {
+            always: function (callback) { 
+                _addCallback('always', callback); 
+                return this;
+            }, 
+            state: function () { return state; }
+        };
+        _extend(deferred, proto);
+        _extend(promised, proto);
+        
+        // deferred.state = 'pending';
+        deferred.promise = promised.promise = promise;
+        // Deferred constructor
+        if (constructor) {
+            constructor.call(deferred, deferred);
+        }
+
+        function promise(target) {
+            return target ? target.promise() : promised;
+        }
+        
+        // Add callbacks for resolve, reject, always
+        function _addCallback(trigger, callback) {
+            if (typeof callback !== 'function')
+                return;
+            callbacks[trigger].push(callback);
+            
+            if (deferred.deferreds) {
+                var 
+                args = {"resolve": [], "reject": []},
+                _callback = function (trigger, i) {
+                    return function () {
+                        args[trigger][i] = (arguments.length > 1 ? slice.call(arguments) : arguments[0]);
+                        deferred[trigger].apply(deferred, args[trigger]);
+                    }
+                };    
+                _forEach(deferred.deferreds, function() {
+                    var 
+                    i = arguments[1], 
+                    _done = _callback('resolve', i), 
+                    _fail = _callback('reject', i);
+
+                    if (!this.state)
+                        return _done(this);
+                        
+                    // Reflect single deferred's state to deferreds
+                    if (!addDoneFail) {
+                        this.done(_done).fail(_fail);
+                    }
+                    
+                    // Run right now!
+                    if (this.state() === 'resolved') {
+                        this.resolve(this);
+                    }
+                    if (this.state() === 'rejected') {
+                        this.reject(this);
+                    }            
+                }); 
+                addDoneFail = true;                
+            }
+        }
+    }
+    
+    // A simple implementing of jQuery.when
+    function _when(deferreds) {
+        if (typeof deferreds === 'function') {
+            // _when(function () {return [d1, d2, ...]})
+            deferreds = deferreds();
+        } else {
+            // _when(d1, d2, ...)
+            deferreds = slice.call(arguments, 0);
+        }
+
+        return _Deferred(function (deferred) {
+            deferred.deferreds = deferreds;
+        });
+    }
+    
     /**
      *  jNode event mechanism
      */
@@ -339,8 +497,7 @@
     function Event(event, props) {
         event = (typeof event === 'string') ? {
             type: event
-        }
-         : {
+        } : {
             originalEvent: event,
             type: event.type
         };
@@ -350,20 +507,21 @@
 
     // Fire an event
     function fire(event) {
-        var
-        data = [].slice.call(arguments, 1),
-        type, callback, orig, listeners, listener,
-        result, defaultPrevented, i;
-
         // Ensure the event is a new instance
         event = Event(event);
-        type = event.type;
-        callback = this[type];
-        orig = event.originalEvent;
-        listeners = eventRegistry[type];
+
+        var
+        data = slice.call(arguments, 1),
+        listener, result, defaultPrevented, i, 
+        type = event.type,
+        callback = this[type],
+        orig = event.originalEvent,
+        listeners = eventRegistry[type] || [];
+    
         if (orig) {
             _extend(event, orig);
         }
+
         for (i = 0; i < listeners.length; i++) {
             listener = listeners[i];
             event.data = listener.data;
@@ -375,9 +533,10 @@
                 orig && (orig.result = result);
             }
         }
+
         return !(
-            typeof callback === 'function' &&
-            callback.call(this, event) === false ||
+            ((typeof callback === 'function') &&
+            (callback.call(this, event) === false)) ||
             defaultPrevented === true);
     }
 
@@ -426,9 +585,12 @@
         var
         // Only for head
         scripts = head.getElementsByTagName('script'),
-        _currentScript = document.currentScript,
+        _currentScript = document.currentScript;
+
+        return actualScript();
+        
         // Return script object based off of src
-        getScriptFromURL = function(url) {
+        function getScriptFromURL(url) {
             var i = 0, script;
 
             for (; i < scripts.length; i++) {
@@ -437,7 +599,7 @@
                     return script;
             }
             return undefined;
-        };
+        }
         function actualScript() {
             if (_currentScript)
                 return _currentScript;
@@ -459,150 +621,12 @@
                 at = stack.indexOf(' at ') !== -1 ? ' at ' : '@';
                 index = stack.indexOf(at);
                 while (index !== -1)
-                    stack = stack.substring(index) + at.length);
+                    stack = stack.substring(index) + at.length;
                 stack = stack.substring(0, stack.indexOf(':'));
             }
-            
             return getScriptFromURL(stack);
-        };
-    }    
-
-    /**
-     *  jNode utilities
-     *  Because thoes utilities don't exposed to external environment,
-     *  so we assume all arguments are security as we expected
-     */
-    // A simple implementing of jQuery.Deferred
-    // * Deferreds's always is diff from Deferred's always, until all the Deferreds are resolved or rejected, then execute always callbacks
-    function _Deferred(constructor) {
-        if (!(this instanceof _Deferred))
-            return new _Deferred(constructor);
-        var
-        deferred = this, promised = {}, 
-        callbacks = {}, proto, 
-        map = {
-            "resolve" : "done",
-            "reject" : "fail"
-        },
-        state = 'pending', // States: pending, resolved, rejected
-        event, trigger;
-
-        for (trigger in map) {
-            event = map[trigger];
-            // Events: done, fail
-            deferred[event] = promised[event] = function (callback) {
-                return _addCallback(event, callback);
-            };
-            //  Trigger: resolve, reject
-            deferred[trigger] = function () {
-                var
-                pending = (deferred.state() === 'pending'),
-                reject = (trigger === 'reject'),
-                resolve = !reject,
-                deferreds = deferred.deferreds,
-                always, queues, fn;
-
-                // For Deferreds and Deferred
-                if (!pending)
-                    return;
-
-                if (deferreds) {
-                    var key;
-                    for (key in deferreds) {
-                        if (deferreds[key].state() !== 'pending')
-                            continue;
-                        pending = true;
-                    }
-                    if (resolve && pending)
-                        return;
-                    if (reject && pending) {
-                        queues = callbacks.reject;
-                    }
-                }
-                if (!queues) {
-                    queues = callbacks[trigger].concat(callbacks.always);
-                    always = true;
-                }
-
-                if (!queues.length)
-                    return;
-
-                callbacks[trigger] = [];
-                always && (callbacks.always = []);
-                while ((fn = queues.shift())) {
-                    fn.apply(promised, arguments);
-                }
-
-                // State: resolved or rejected
-                if (!deferreds || always) {
-                    state = trigger + (reject ? 'ed' : 'd');
-                }
-            }
         }
-        proto = {
-            always: function (callback) { return _addCallback('always', callback); }, 
-            state: function () { return state; }
-        };
-        _extend(deferred, proto);
-        _extend(promised, proto);
-        
-        // deferred.state = 'pending';
-        deferred.promise = promised.promise = promise;
-        // Deferred constructor
-        if (constructor) {
-            constructor.call(deferred, deferred);
-        }
-
-        if (deferred.deferreds) {
-            var
-            args = [],
-            _callback = function (trigger) {
-                return function () {
-                    args.push(arguments.length > 1 ? arguments : arguments[0]);
-                    deferred[trigger].apply(deferred, args);
-                }
-            },
-            _done = _callback('resolve'),
-            _fail = _callback('reject');
-
-            _forEach(deferred.deferreds, function () {
-                if (!(this instanceof _Deferred))
-                    return _done(this);
-
-                this.done(_done).fail(_fail);
-                if (this.state() === 'resolved')
-                    this.resolve();
-                if (this.state() === 'rejected')
-                    this.reject();
-            });
-        }
-
-        function promise(target) {
-            return target ? target.promise() : promised;
-        }
-
-        // Add callbacks for done, fail, always
-        function _addCallback(event, callback) {
-            if (typeof callback !== 'function')
-                return;
-            callbacks[event] = (callbacks[event] || []).push(callback);
-        }
-    }
-    
-    // A simple implementing of jQuery.when
-    function _when(deferreds) {
-        if (typeof deferreds === 'function') {
-            // _when(function () {return [d1, d2, ...]})
-            deferreds = deferreds();
-        } else {
-            // _when(d1, d2, ...)
-            deferreds = slice.call(arguments, 0);
-        }
-
-        return _Deferred(function (deferred) {
-            deferred.deferreds = deferreds;
-        }).promise();
-    }
+    }  
     
     // A simple implementing of jQuery.extend
     function _extend(target) {
@@ -636,13 +660,13 @@
     
     // Parse a URL and return its components
     function _parse(uri) {
-        var a = create('a'), result;
+        var a = document.createElement('a'), leadslash, result;
         a.href = uri;
-        // In IE, without '/' prefix for A element's pathname property
-        if (!a.pathname.indexOf('/')) a.pathname = '/' + a.pathname;
-        result = { href: a.href, protocol: a.protocol, host: a.host, pathname: a.pathname, search: a.search, hash: a.hash };
+        // In IE, without `/` prefix for `A` element's Only-Readable pathname property
+        leadslash = (a.pathname.indexOf('/') !== 0);
+        result = { href: a.href, protocol: a.protocol, host: a.host, pathname: (leadslash ? ('/' + a.pathname) : a.pathname), search: a.search, hash: a.hash };
         a = null;
-        return result;     
+        return result;
     }    
 
     /**
