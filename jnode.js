@@ -2,7 +2,7 @@
  *  jNode, a CMD module loader
  *
  *  Usage:
- *  jNode.setup({paths: {}, alias: {}});
+ *  jNode.set({paths: {}, alias: {}});
  *  jNode.require('uri1, uri2', callbcak);
  *  
  *  Copyright(c) 2014 Vip Inc.
@@ -34,9 +34,8 @@
     dynamicURIResolveSupported = (_parse('').href !== ''),
 
     // RegExp
-    RE_DEPENDENCIES = /require\s*\(\s*'|"(.+?)'|"\s*\)/gm,
+    RE_DEPENDENCIES = /require\s*\(\s*(?:'|")(.+?)(?:'|")\s*\)/gm,
     RE_DELIMITER_COMMA = /,\s*/,
-    RE_FILE = /\/(?:[^./]*)(\.\w+)?$/,
 
     //jNode events
     EVENT_RESOLVE = 'resolve', // When call resolve
@@ -104,7 +103,7 @@
      */
     // Take a base URL, and a href URL, and resolve them as a browser would for an anchor tag
     function resolve(uri, baseURI) {
-        var a0, a1, orig, i, event, path;
+        var a0, a1, orig, i, event, path, ext;
         if (settings.alias[uri]) { // Alias
             uri = settings.alias[uri];
         } else {
@@ -122,8 +121,11 @@
             base.href = orig; // Restore
             
             // No-Search(dynamic URL) and No-Ext
-            if (!a1.search && !~a1.pathname.indexOf('.')) {
-                uri += '.js';
+            // Support filename like this, xxx[.xxx, ...].js
+            ext = a1.pathname.substring(a1.pathname.lastIndexOf('.') + 1 || a1.pathname.length);
+            if (!a1.search && (!ext || !moduleType[ext])) {
+                a1.pathname += '.js';
+                a1.href += '.js';
             }
             
             // IE always return ":" as the default value
@@ -149,15 +151,21 @@
         fire.call(null, event, uri); // It's not recommened to use the jNode.fire is exported to external
         if (typeof event.result === 'string')
             uri = event.result;
+
         return uri;
     }
 
-    // Setup jNode
-    function setup(k, v) {
+    // Set jNode setting
+    function _set(k, v) {
         if (typeof k === 'object')
             _extend(settings, k);
         else
             settings[k] = v;
+    }    
+    
+    // Get jNode setting
+    function _get(k) {
+        return settings[k];
     }
 
     // Add a module type with supported file ext
@@ -171,7 +179,7 @@
         cache = Module.instances, alias = {},
         waitings, delayWaitings, module, uri, code, event;
 
-        if (typeof id === 'object') {
+        if ('object' === typeof id) {
             // define({}), define([], factory)
             factory = dependencies || function() {
                 return id;
@@ -184,16 +192,16 @@
             dependencies = undefined;
             id = undefined;
         }
-
+        dependencies = dependencies || [];
         uri = _getCurrentScript().src;
         if (id) {
             uri = _parse(uri);
-            uri = uri.protocol + '//' + uri.host + uri.pathname.replace(RE_FILE, '/' + id + '$1') + uri.search + uri.hash;
+            uri = uri.protocol + '//' + uri.host + uri.pathname.substring(0, uri.pathname.lastIndexOf('/') + 1) + id + '.js' + uri.search + uri.hash;
             // In fact, a module id is an alias
             alias[id] = uri;
-            setup('alias', alias);
+            _set('alias', alias);
         }
-        module = cache[uri];
+        module = cache[uri] || Module({uri: uri});
         // Repeated define
         if (module.status === 2) return;
 
@@ -205,8 +213,7 @@
         // factory source code
         code = factory.toString();
         // Dependencies is undefined already
-        if (dependencies === undefined) {
-            dependencies = [];
+        if (!dependencies.length) {
             // Fire "beforedependenciesready" event, may be you want to add some alias to "require"
             event = Event(EVENT_BEFORE_DEPENDENCIES_READY);
             fire.call(null, event, code);
@@ -226,17 +233,17 @@
         // Require dependencies, those are concurrent requests
         // Ignore the failed Require
         waitings = dependencies.length;
-        _when(waitings ? _require(dependencies) : true).always(function() {
+        _when(waitings ? _require.call(module, dependencies) : true).always(function() {
             var exports;
             module.status = 3;
             module.statusText = 'INTERACTIVE';
             exports = factory(function() {
-                require.apply(module, arguments);
+                return require.apply(module, arguments);
             }, module.exports, module);
 
             // Which dependencies defer to request at factory runtime
             delayWaitings = dependencies.length - waitings;
-            _when(delayWaitings ? _require(dependencies.slice(waitings)) : true).always(function() {
+            _when(delayWaitings ? _require.call(module, dependencies.slice(waitings)) : true).always(function() {
                 if (exports) module.exports = exports;
                 module.status = 4;
                 module.statusText = 'COMPLETE';
@@ -255,7 +262,9 @@
         if (uri)
             return Module.instances[uri].exports;
         // Or else async
-        _require.apply(this, [uri].concat(slice.call(arguments, 1)));
+        _require.apply(this, [uri].concat(slice.call(arguments, 1), true));
+        // Runtime dependencies
+        if (this instanceof Module) this.dependencies = this.dependencies.concat(uri);
     }
 
     // Accepts a list of module identifiers and a optional callback function
@@ -273,6 +282,7 @@
         cache = Module.instances,
         baseuri = this.uri || baseURI, 
         deferreds = [];
+        
         deferred = _when(function() {
             _forEach(uri, function(v, i) {
                 var module = cache[(uri[i] = resolve(v, baseuri))];
@@ -282,14 +292,12 @@
         }).always(function() {
             var exports = [];
             if (callback) {
-                _forEach(deferreds, function() {
+                _forEach(arguments, function() {
                     exports.push(this.exports);
                 });
                 callback.apply(this, exports);
             }
         });
-        // Runtime dependencies
-        if (this instanceof Module) this.dependencies.push(uri);
         return deferred;
     }
 
@@ -322,16 +330,14 @@
 
     // Create a module
     function _createModule(uri, type) {
-        var
-        module = Module({uri: uri}),
-        i, pathname, ext, transport;
+        var module, i, pathname, ext, transport;
 
         if (!type) {
             pathname = _parse(uri).pathname;
-            ext = pathname.substring(pathname.lastIndexOf('.') + 1 || pathname.length);        
+            ext = pathname.substring(pathname.lastIndexOf('.') + 1 || pathname.length);
             type = moduleType[ext];
         }
-        
+        module = Module({uri: uri});
         module.type = type;
         module.status = 1;
         module.statusText = 'LOADING';
@@ -367,7 +373,7 @@
             function _(trigger) {
                 // Events: done, fail
                 deferred[event] = promised[event] = function (callback) {
-                    _addCallback(trigger, callback);
+                    _addCallback.call(this, trigger, callback);
                     return this;
                 };
                 //  Trigger: resolve, reject
@@ -375,7 +381,7 @@
                     var
                     reject = (trigger === 'reject'),
                     resolve = !reject,
-                    deferreds = deferred.deferreds,
+                    deferreds = this.deferreds,
                     pending, always, queues, fn, key;
 
                     if (deferreds) {
@@ -391,30 +397,27 @@
                             queues = callbacks.reject;
                         }
                     }
-                    
+
                     if (!deferreds || !pending) {
                         always = true;
                         queues = callbacks[trigger].concat(callbacks.always);
                     }
-
-                    if (!queues.length)
-                        return;
-
-                    callbacks[trigger] = [];
-                    always && (callbacks.always = []);
                     // State: resolved or rejected
                     if (!deferreds || always) {
                         state = trigger + (reject ? 'ed' : 'd');
-                    }                    
+                    }                     
+
+                    callbacks[trigger] = [];
+                    always && (callbacks.always = []);
                     while ((fn = queues.shift())) {
-                        fn.apply(deferred, arguments);
+                        fn.apply(this, arguments);
                     }
                 };
             }
         }
         proto = {
             always: function (callback) { 
-                _addCallback('always', callback); 
+                _addCallback.call(this, 'always', callback); 
                 return this;
             }, 
             state: function () { return state; }
@@ -435,10 +438,11 @@
         
         // Add callbacks for resolve, reject, always
         function _addCallback(trigger, callback) {
+            var deferred = this;
             if (typeof callback !== 'function')
                 return;
             callbacks[trigger].push(callback);
-            
+
             if (deferred.deferreds) {
                 var 
                 args = {"resolve": [], "reject": []},
@@ -458,6 +462,7 @@
                         return _done(this);
                         
                     // Reflect single deferred's state to deferreds
+                    // For chain call such as deferred.always(fn).always(fn)...
                     if (!addDoneFail) {
                         this.done(_done).fail(_fail);
                     }
@@ -470,7 +475,7 @@
                         this.reject(this);
                     }            
                 }); 
-                addDoneFail = true;                
+                addDoneFail = true;             
             }
         }
     }
@@ -631,6 +636,7 @@
     // A simple implementing of jQuery.extend
     function _extend(target) {
         var
+        toString = Object.prototype.toString, 
         sources = slice.call(arguments, 1),
         source, k, v, i;
         
@@ -638,12 +644,14 @@
             source = sources[i];
             for (k in source) {
                 v = source[k];
-                if (typeof v === 'object' && v !== null) {
-                    if (typeof target[k] === 'object') {
+                if ('[object Object]' === toString.call(v)) {
+                    if ('[object Object]' === toString.call(target[k])) {
                         _extend(target[k], v);
                     } else {
                         target[k] = _extend({}, v);
                     }
+                } else if ('[object Array]' === toString.call(v)) {
+                    target[k] = [].concat(v);
                 } else {
                     target[k] = v;
                 }
@@ -673,7 +681,8 @@
      *  API
      */
     jNode.cache = Module.instances;
-    jNode.setup = setup;
+    jNode.set = _set;
+    jNode.get = _get;
     jNode.addType = addType;
     jNode.transport = transport;
     jNode.Event = Event;
