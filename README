@@ -1,0 +1,5 @@
+jNode被设计为其他框架的加载系统，这就要求其不能限制宿主框架的自由；
+然而，诸如seajs，无法满足以下需求：
+1）支持运行时（runtime）的模块加载（如，require(modulePath + 'module')）
+2）支持自定义require（如，include内部封装了require，include('module')）
+3）更多的自定义能力而不破坏jNode的生态系统（如，你可以轻松自定义jNode发送请求的方式）
