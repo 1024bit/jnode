@@ -283,6 +283,7 @@
         uri = resolve(uri, this.uri);
         var module = Module.instances[uri];       
         if (module && module.status === 4) {
+            if (callback) { callback.call(module, module.exports); }
             return module.exports;
         } 
         
