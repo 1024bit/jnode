@@ -276,14 +276,16 @@
         });
     }
     define.cmd = true;
+    define.signature = jNode;
 
     // Output a module object
     function require(uri, callback) {
         uri = resolve(uri, this.uri);
-        var module = Module.instances[uri];
+        var module = Module.instances[uri];       
         if (module && module.status === 4) {
             return module.exports;
         } 
+        
         // Runtime dependencies
         if ((this instanceof Module) && !module) this.dependencies = this.dependencies.concat(uri);        
         // Or else async
