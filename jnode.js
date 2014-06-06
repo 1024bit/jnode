@@ -589,8 +589,8 @@
             i = 0;
 
             if (off) {
-                if (!arguments.length) 
-                    eventRegistry = {};
+                // if (!arguments.length) // Prevent from removing all events of ill-considered action
+                    // eventRegistry = {};
                 listener = data;
             }
             if (typeof type === 'string') {
