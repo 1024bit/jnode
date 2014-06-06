@@ -42,10 +42,11 @@
     RE_DELIMITER_COMMA = /,\s*/,
 
     //jNode events
-    EVENT_RESOLVE = 'resolve', // When call resolve
-    EVENT_DEFINE = 'define', // When call define
-    EVENT_BEFORE_DEPENDENCIES_READY = 'beforeDependenciesReady', // Before module's dependencies is ready
-    EVENT_READY = 'ready'; // Module is ready
+    EVENT_MODULE_RESOLVE = 'moduleresolve', // When call resolve
+    EVENT_MODULE_DEFINE = 'moduledefine', // When call define
+    EVENT_BEFORE_MODULE_PREFETCH = 'beforemoduleprefetch', // Before module's dependencies is ready
+    EVENT_MODULE_EXECUTE = 'moduleexecute', // Execute module
+    EVENT_MODULE_READY = 'moduleready'; // Module is ready
 
     global.define = define;
     global.require = require;
@@ -152,7 +153,7 @@
             }
         }
         // Fire "resolve" event, then you can customize the resolved uri
-        event = Event(EVENT_RESOLVE);
+        event = Event(EVENT_MODULE_RESOLVE);
         fire.call(null, event, uri); // It's not recommened to use the jNode.fire is exported to external
         if (typeof event.result === 'string')
             uri = event.result;
@@ -226,14 +227,14 @@
         // Fire "define" event, may be you want to customize the behavior of "define"
         // window.fn = function() { console.log(1); };
         // (function(fn){ this[fn](); }).call(null, ['fn']) will output "1" in Chrome
-        if (!fire.call({}, EVENT_DEFINE, id, dependencies, factory))
+        if (!fire.call({}, EVENT_MODULE_DEFINE, id, dependencies, factory))
             return;
         // factory source code
         code = factory.toString();
         // Dependencies is undefined already
         if (!dependencies.length) {
-            // Fire "beforedependenciesready" event, may be you want to add some alias to "require"
-            event = Event(EVENT_BEFORE_DEPENDENCIES_READY);
+            // Fire "beforemoduledependenciesready" event, may be you want to add some alias to "require"
+            event = Event(EVENT_BEFORE_MODULE_PREFETCH);
             fire.call(null, event, code);
             // Extract module dependencies
             while (RE_DEPENDENCIES.exec(code)) {
@@ -258,9 +259,13 @@
             var exports;
             module.status = 3;
             module.statusText = 'INTERACTIVE';
+            
             exports = factory(function() {
                 return require.apply(module, arguments);
             }, module.exports, module);
+            
+            // Fire "moduleexecute" event
+            fire.call(null, EVENT_MODULE_EXECUTE, module, exports || module.exports);           
 
             // Which dependencies defer to request at factory runtime
             delayWaitings = dependencies.length - waitings;
@@ -272,7 +277,7 @@
             });
 
             // Fire "ready" event, then you can depend on this module securely
-            fire.call(null, EVENT_READY, module);
+            fire.call(null, EVENT_MODULE_READY, module);
         });
     }
     define.cmd = true;
@@ -283,6 +288,7 @@
         uri = resolve(uri, this.uri);
         var module = Module.instances[uri];       
         if (module && module.status === 4) {
+            // For sync callback
             if (callback) { callback.call(module, module.exports); }
             return module.exports;
         } 
@@ -548,10 +554,7 @@
         callback = this[type],
         orig = event.originalEvent,
         listeners = eventRegistry[type] || [];
-    
-        if (orig) {
-            _extend(event, orig);
-        }
+        if (orig) _extend(event, orig);
 
         for (i = 0; i < listeners.length; i++) {
             listener = listeners[i];
@@ -576,27 +579,31 @@
     // on can accepts event object?
     _forEach('on off'.split(' '), function(method) {
         jNode[method] = function(type, data, listener) {
+            if ('function' === typeof data) {
+                listener = data;
+                data = undefined;
+            }
             var
             off = (method === 'off'),
             events, types,
             i = 0;
 
             if (off) {
-                if (!arguments.length) {
+                if (!arguments.length) 
                     eventRegistry = {};
-                }
                 listener = data;
             }
             if (typeof type === 'string') {
                 types = type.split(' ');
                 for (; i < types.length; i++) {
                     type = types[i];
-                    if (off) {
-                        delete eventRegistry[type];
-                    } else {
-                        eventRegistry[type] = (eventRegistry[type] || []).push({
+                    if (off) 
+                        delete eventRegistry[type]; 
+                    else {
+                        if (!eventRegistry[type]) eventRegistry[type] = [];
+                        eventRegistry[type].push({
                             data: data,
-                            handler: handler
+                            handler: listener
                         });
                     }
                 }
