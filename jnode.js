@@ -14,9 +14,11 @@
     jNode = {},
     defaults = {
         paths: {},
-        alias: {}
+        alias: {}, 
+        deps: {}
     },
     slice = [].slice,
+    toString = Object.prototype.toString, 
     settings = _extend({}, defaults),
     moduleType = {
         'js': 'script', 'json': 'script',
@@ -34,7 +36,7 @@
     dynamicURIResolveSupported = (_parse('').href !== ''),
 
     // RegExp
-    RE_DEPENDENCIES = /require\s*\(\s*(?:'|")(.+?)(?:'|")\s*\)/gm,
+    RE_DEPENDENCIES = /require\s*\(\s*(?:'|")([^+]+?)(?:'|")\s*\)/gm,
     RE_DELIMITER_COMMA = /,\s*/,
 
     //jNode events
@@ -102,13 +104,14 @@
      *  https://github.com/cmdjs/specification/blob/master/draft/module.md
      */
     // Take a base URL, and a href URL, and resolve them as a browser would for an anchor tag
-    function resolve(uri, baseURI) {
+    function resolve(uri, baseUri) {
+        baseUri = baseUri || baseURI;
         var a0, a1, orig, i, event, path, ext;
         if (settings.alias[uri]) { // Alias
             uri = settings.alias[uri];
         } else {
             // IE regard '' as a file
-            if (uri === '') uri = baseURI;
+            if (uri === '') uri = baseUri;
 
             // Begin with path
             i = uri.indexOf('/');
@@ -116,7 +119,7 @@
                 uri = path + uri.substring(i);
 
             orig = base.href;
-            base.href = baseURI; // A trick for getting a URL's component
+            base.href = baseUri; // A trick for getting a URL's component
             a1 = _parse(uri);
             base.href = orig; // Restore
             
@@ -129,21 +132,21 @@
             }
             
             // IE always return ":" as the default value
-            if (a1.protocol !== ':') { // Absolute uri
+            if (~a1.href.indexOf('//')) { // Absolute uri
                 uri = a1.href;
             } else {
-                if (!router[baseURI])
-                    router[baseURI] = {};
+                if (!router[baseUri])
+                    router[baseUri] = {};
 
-                if (!router[baseURI][uri]) {
+                if (!router[baseUri][uri]) {
                     if (!dynamicURIResolveSupported) { // ~IE7
-                        a0 = _parse(baseURI);
+                        a0 = _parse(baseUri);
                         i = a0.pathname.lastIndexOf('/');
                         a1.href = a0.protocol + '//' + a0.host + a0.pathname.substring(0, ~i ? i : undefined) + a1.pathname;
                     }
-                    router[baseURI][uri] = a1.href;
+                    router[baseUri][uri] = a1.href;
                 }
-                uri = router[baseURI][uri];
+                uri = router[baseUri][uri];
             }
         }
         // Fire "resolve" event, then you can customize the resolved uri
@@ -157,9 +160,11 @@
 
     // Set jNode setting
     function _set(k, v) {
-        if (typeof k === 'object')
+        if ('object' === typeof k)
             _extend(settings, k);
-        else
+        else if ('object' === typeof v && 'object' === typeof settings[k])
+            settings[k] = _extend(settings[k], v);
+        else 
             settings[k] = v;
     }    
     
@@ -257,14 +262,16 @@
     define.cmd = true;
 
     // Output a module object
-    function require(uri) {
+    function require(uri, callback) {
         uri = resolve(uri, this.uri);
-        if (uri)
-            return Module.instances[uri].exports;
-        // Or else async
-        _require.apply(this, [uri].concat(slice.call(arguments, 1), true));
+        var module = Module.instances[uri];
+        if (module && module.status === 4) {
+            return module.exports;
+        } 
         // Runtime dependencies
-        if (this instanceof Module) this.dependencies = this.dependencies.concat(uri);
+        if ((this instanceof Module) && !module) this.dependencies = this.dependencies.concat(uri);        
+        // Or else async
+        return _require.apply(this, [uri].concat(slice.call(arguments, 1)));
     }
 
     // Accepts a list of module identifiers and a optional callback function
@@ -280,7 +287,7 @@
 
         var
         cache = Module.instances,
-        baseuri = this.uri || baseURI, 
+        baseuri = this.uri, 
         deferreds = [];
         
         deferred = _when(function() {
@@ -636,22 +643,24 @@
     // A simple implementing of jQuery.extend
     function _extend(target) {
         var
-        toString = Object.prototype.toString, 
         sources = slice.call(arguments, 1),
-        source, k, v, i;
+        source, k, v, i, typeto, typefrom;
         
         for (i = 0; i < sources.length; i++) {
             source = sources[i];
             for (k in source) {
                 v = source[k];
-                if ('[object Object]' === toString.call(v)) {
-                    if ('[object Object]' === toString.call(target[k])) {
-                        _extend(target[k], v);
-                    } else {
-                        target[k] = _extend({}, v);
+                typeto = toString.call(v);
+                typefrom = toString.call(target[k]);
+                if ('object' === typeof v) {
+                    if ('object' === typeof target[k]) {
+                        if (typeto === typefrom) {
+                            _extend(target[k], v);
+                        } 
+                    } 
+                    if (typeto !== typefrom) {
+                        target[k] = _extend((typeto === '[object Array]' ? [] : {}), v);
                     }
-                } else if ('[object Array]' === toString.call(v)) {
-                    target[k] = [].concat(v);
                 } else {
                     target[k] = v;
                 }
