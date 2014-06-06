@@ -28,7 +28,8 @@
     },
     transports = {},
     router = {},
-    eventRegistry = {},
+    eventRegistry = {}, 
+    rules = {require: ''}, 
 
     head = document.getElementsByTagName('head')[0],
     base = document.getElementsByTagName('base')[0] || head.appendChild(document.createElement('base')),
@@ -36,7 +37,8 @@
     dynamicURIResolveSupported = (_parse('').href !== ''),
 
     // RegExp
-    RE_DEPENDENCIES = /require\s*\(\s*(?:'|")([^+]+?)(?:'|")\s*\)/gm,
+    RE_DEPENDENCIES, 
+    RE_DEPENDENCIES_BODY = '\\s*\\(\\s*(?:\'|\")([^+]+?)(?:\'|\")\\s*\\)', 
     RE_DELIMITER_COMMA = /,\s*/,
 
     //jNode events
@@ -177,6 +179,17 @@
     function addType(type, ext) {
         moduleType[ext] = type;
     }
+    
+    // Add a rule for extracting module dependencies
+    function addRule(name, rule) {
+        rule = rule || '';
+        var name, names = [];
+        rules[name] = rule;
+        for (name in rules) { names.push(name); }
+        name = '(' + names.join('|') + ')';
+        RE_DEPENDENCIES = new RegExp(name + RE_DEPENDENCIES_BODY, 'mg');        
+    }
+    addRule('require');
 
     // Define a module and extract the dependencies
     function define(id, dependencies, factory) {
@@ -223,8 +236,11 @@
             event = Event(EVENT_BEFORE_DEPENDENCIES_READY);
             fire.call(null, event, code);
             // Extract module dependencies
-            while (RE_DEPENDENCIES.exec(code))
-                dependencies.push(RegExp.$1);
+            while (RE_DEPENDENCIES.exec(code)) {
+                rule = rules[RegExp.$1];
+                dependencies.push(('function' === typeof rule) ? rule(RegExp.$2) : RegExp.$2);
+            }
+                
             if (event.result) {
                 dependencies = dependencies.concat(event.result);
             }
@@ -693,6 +709,7 @@
     jNode.set = _set;
     jNode.get = _get;
     jNode.addType = addType;
+    jNode.addRule = addRule;
     jNode.transport = transport;
     jNode.Event = Event;
     jNode.fire = fire;
