@@ -12,19 +12,15 @@
 (function(global) {
     var
     jNode = {},
-    defaults = {
-        paths: {},
-        alias: {}, 
-        deps: {}
-    },
+    defaults = {paths: {}, alias: {}, deps: []},
     slice = [].slice,
     toString = Object.prototype.toString, 
     settings = _extend({}, defaults),
     moduleType = {
-        'js': 'script', 'json': 'script',
+        'js': 'script', 
         'css': 'style',
         'gif': 'image', 'jpg': 'image', 'png': 'image',
-        'html': 'document', 'xml': 'document', 'txt': 'document'
+        'json': 'document', 'html': 'document', 'xml': 'document', 'txt': 'document'
     },
     transports = {},
     router = {},
@@ -38,8 +34,9 @@
 
     // RegExp
     RE_DEPENDENCIES, 
-    RE_DEPENDENCIES_BODY = '\\s*\\(\\s*(?:\'|\")([^+]+?)(?:\'|\")\\s*\\)', 
+    RE_DEPENDENCIES_BODY = '\\s*\\(\\s*(?:\'|\")([^+]+?)(?:\'|\")', 
     RE_DELIMITER_COMMA = /,\s*/,
+    RE_TRIM = /^\s*|\s*$/gm, 
 
     //jNode events
     EVENT_MODULE_RESOLVE = 'moduleresolve', // When call resolve
@@ -78,11 +75,16 @@
                 }
             };
             function callback() {
-                var IFRAME = (object.tagName.toUpperCase() === 'IFRAME'), IMG = (object.tagName.toUpperCase() === 'IMG');
+                var 
+                IFRAME = (object.tagName.toUpperCase() === 'IFRAME'), 
+                IMG = (object.tagName.toUpperCase() === 'IMG'), 
+                JSON = ~object.src.indexOf('.json');
                 if (!object.readyState || /loaded|complete/.test(object.readyState)) {
-                    if (IFRAME)
-                        module.exports = object.contentWindow.document.body.innerHTML;
-                    else if (IMG)
+                    if (IFRAME) {
+                        res = object.contentWindow.document.body.innerHTML;
+                        res.replace(RE_TRIM, '');
+                        module.exports = JSON ? eval('(' + res + ')') : res;
+                    } else if (IMG)
                         module.exports = object;
                     // 404 error, Non-Standard CMD module or Non-JS module
                     if (module.status === 1) {
@@ -281,7 +283,6 @@
         });
     }
     define.cmd = true;
-    define.signature = jNode;
 
     // Output a module object
     function require(uri, callback) {
@@ -303,28 +304,27 @@
     jNode.require = require.async = _require;
 
     // The background "Hero" of jNode.require, require, require.async
-    function _require(uri, callback, type) {
-        type = type || [];
+    function _require(uri, callback) {
         if (typeof uri === 'string')
             uri = uri.split(RE_DELIMITER_COMMA);
-        if (typeof type === 'string')
-            type = type.split(RE_DELIMITER_COMMA);
-
+        // Ensure all dependencies are prefetched
+        uri = settings.deps.concat(uri);
+        
         var
         cache = Module.instances,
         baseuri = this.uri, 
         deferreds = [];
-        
+
         deferred = _when(function() {
             _forEach(uri, function(v, i) {
                 var module = cache[(uri[i] = resolve(v, baseuri))];
-                deferreds.push(module || _createModule(uri[i], type[i]));
+                deferreds.push(module || _createModule(uri[i]));
             });
             return deferreds;
         }).always(function() {
             var exports = [];
             if (callback) {
-                _forEach(arguments, function() {
+                _forEach(slice.call(arguments, settings.deps.length), function() {
                     exports.push(this.exports);
                 });
                 callback.apply(this, exports);
@@ -361,14 +361,13 @@
     }
 
     // Create a module
-    function _createModule(uri, type) {
+    function _createModule(uri) {
         var module, i, pathname, ext, transport;
 
-        if (!type) {
-            pathname = _parse(uri).pathname;
-            ext = pathname.substring(pathname.lastIndexOf('.') + 1 || pathname.length);
-            type = moduleType[ext];
-        }
+        pathname = _parse(uri).pathname;
+        ext = pathname.substring(pathname.lastIndexOf('.') + 1 || pathname.length);
+        type = moduleType[ext];
+
         module = Module({uri: uri});
         module.type = type;
         module.status = 1;
