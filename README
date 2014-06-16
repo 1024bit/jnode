@@ -1,6 +1,8 @@
-���jNode�ĳ�������ҪΪĳЩ����ṩһ�׵ײ�ļ���ϵͳ�����Ҫ�����ܹ��������Ͻ�������ܣ�
-����ģ�����ϵͳ������seajs���޷�������������
-1��֧������ʱ��runtime����ģ����أ��磬require(modulePath + 'module')��
-2��֧���Զ���require���磬include�ڲ���װ��require��include('module')��
-3��������Զ������������ƻ�jNode����̬ϵͳ���磬����������Զ���jNode��������ķ�ʽ��
-4�����Ʋ�ͬ�����ļ��������ȼ�
+设计jNode的初衷是需要为某些框架提供一套底层的加载系统，这就要求其能够方便整合进宿主框架；
+主流模块加载系统，诸如seajs，无法满足以下需求：
+1）支持运行时（runtime）的模块加载（如，require(modulePath + 'module')）
+2）支持自定义require（如，include内部封装了require，include('module')）
+3）更多的自定义能力而不破坏jNode的生态系统（如，你可以轻松自定义jNode发送请求的方式）
+4）定制不同类型文件加载优先级
+
+最新源地址，请移步：https://github.com/1024bit/jnode
