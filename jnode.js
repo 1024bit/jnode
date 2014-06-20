@@ -1,5 +1,5 @@
 /**
- *  jNode, a CMD module loader
+ *  jNode, a CMD and AMD compatible module loader
  *
  *  Usage:
  *  jNode.set({paths: {}, alias: {}});
@@ -37,6 +37,7 @@
     RE_DEPENDENCIES_BODY = '\\s*\\(\\s*(?:\'|\")([^+]+?)(?:\'|\")', 
     RE_DELIMITER_COMMA = /,\s*/,
     RE_TRIM = /^\s*|\s*$/gm, 
+    RE_LEADING_SLASH = /^\//,
 
     //jNode events
     EVENT_MODULE_RESOLVE = 'moduleresolve', // When call resolve
@@ -48,7 +49,39 @@
     global.define = define;
     global.require = require;
     global.jNode = jNode;
+    
+    addRule('require');
+    
+    // Set jNode setting
+    function _set(k, v) {
+        if ('object' === typeof k)
+            _extend(settings, k);
+        else if ('object' === typeof v && 'object' === typeof settings[k])
+            settings[k] = _extend(settings[k], v);
+        else 
+            settings[k] = v;
+    }    
+    
+    // Get jNode setting
+    function _get(k) {
+        return settings[k];
+    }
 
+    // Add a module type with supported file ext
+    function addType(type, ext) {
+        moduleType[ext] = type;
+    }
+    
+    // Add a rule for extracting module dependencies
+    function addRule(name, rule) {
+        rule = rule || '';
+        var name, names = [];
+        rules[name] = rule;
+        for (name in rules) { names.push(name); }
+        name = '(' + names.join('|') + ')';
+        RE_DEPENDENCIES = new RegExp(name + RE_DEPENDENCIES_BODY, 'mg');        
+    }
+    
     // Add default transport
     // You can also refer below structure to add other transports, eg: audio, video, archives, office, adobe etc
     _forEach({ 'script': 'script', 'style': 'link', 'image': 'img', 'document': 'iframe' }, function(element, type) {
@@ -107,8 +140,7 @@
     });
 
     /**
-     *  A implementing of "Common Module Definition"
-     *  https://github.com/cmdjs/specification/blob/master/draft/module.md
+     *  Implementation
      */
     // Take a base URL, and a href URL, and resolve them as a browser would for an anchor tag
     function resolve(uri, baseUri, type) {
@@ -165,37 +197,6 @@
         return uri;
     }
 
-    // Set jNode setting
-    function _set(k, v) {
-        if ('object' === typeof k)
-            _extend(settings, k);
-        else if ('object' === typeof v && 'object' === typeof settings[k])
-            settings[k] = _extend(settings[k], v);
-        else 
-            settings[k] = v;
-    }    
-    
-    // Get jNode setting
-    function _get(k) {
-        return settings[k];
-    }
-
-    // Add a module type with supported file ext
-    function addType(type, ext) {
-        moduleType[ext] = type;
-    }
-    
-    // Add a rule for extracting module dependencies
-    function addRule(name, rule) {
-        rule = rule || '';
-        var name, names = [];
-        rules[name] = rule;
-        for (name in rules) { names.push(name); }
-        name = '(' + names.join('|') + ')';
-        RE_DEPENDENCIES = new RegExp(name + RE_DEPENDENCIES_BODY, 'mg');        
-    }
-    addRule('require');
-
     // Define a module and extract the dependencies
     function define(id, dependencies, factory) {
         var
@@ -215,11 +216,11 @@
             dependencies = undefined;
             id = undefined;
         }
-        dependencies = dependencies || [];
+
         uri = _getCurrentScript().src;
         if (id) {
             uri = _parse(uri);
-            uri = uri.protocol + '//' + uri.host + uri.pathname.substring(0, uri.pathname.lastIndexOf('/') + 1) + id + '.js' + uri.search + uri.hash;
+            uri = uri.protocol + '//' + uri.host + uri.pathname.substring(0, uri.pathname.lastIndexOf('/') + 1) + id.replace(RE_LEADING_SLASH, '') + '.js' + uri.search + uri.hash;
             // In fact, a module id is an alias
             alias[id] = uri;
             _set('alias', alias);
@@ -235,8 +236,8 @@
             return;
         // factory source code
         code = factory.toString();
-        // Dependencies is undefined already
-        if (!dependencies.length) {
+        // Dependencies is undefined
+        if (undefined === dependencies) {
             // Fire "beforemoduledependenciesready" event, may be you want to add some alias to "require"
             event = Event(EVENT_BEFORE_MODULE_PREFETCH);
             fire.call(null, event, code);
@@ -284,7 +285,11 @@
             fire.call(null, EVENT_MODULE_READY, module);
         });
     }
-    define.cmd = true;
+     
+    // https://github.com/cmdjs/specification/blob/master/draft/module.md
+    define.cmd = {amd: true};
+    // https://github.com/amdjs/amdjs-api/blob/master/AMD.md#defineamd-property-
+    define.amd = {cmd: true};
 
     // Output a module object
     function require(uri, callback, type) {
