@@ -25,6 +25,7 @@
     transports = {},
     router = {},
 	vars = {}, 
+	deps = {}, 
     eventRegistry = {}, 
     rules = {require: ''}, 
 
@@ -62,12 +63,21 @@
     
 	// Set jNode setting
     function _set(k, v) {
-        if ('object' === typeof k)
+        var _deps = [];
+		if ('object' === typeof k) {
             _extend(settings, k);
-        else if ('object' === typeof v && 'object' === typeof settings[k])
+			if (k.deps) _deps = k.deps;
+		} else if ('object' === typeof v && 'object' === typeof settings[k]) {
             settings[k] = _extend(settings[k], v);
-        else 
+			if (k === 'deps')  _deps = v;
+		} else { 
             settings[k] = v;
+		}
+			
+		// Memo
+		_forEach(_deps, function(v, i) {
+			deps[resolve(v)] = i;
+		});
     }    
     
     // Get jNode setting
@@ -339,21 +349,10 @@
         baseuri = this.uri, 
         deferreds = [];
         deferred = _when(function() {
-            _forEach(settings.deps, function(v, i) {
-				// Deps's base is document's baseURI
-				settings.deps[i] = resolve(v, baseURI);
-				if (settings.deps[i] === baseuri) return;
-				var module = cache[settings.deps[i]];
-                deferreds.push(module || _createModule(settings.deps[i]));
-            });
-            return deferreds;		
+			return iterator.call(settings.deps, true);	
 		}).always(function() {
 			_when(function() {
-				_forEach(uri, function(v, i) {
-					var module = cache[(uri[i] = resolve(v, baseuri, type[i]))];
-					deferreds.push(module || _createModule(uri[i], type[i]));
-				});
-				return deferreds;
+				return iterator.call(uri);
 			}).always(function() {
 				var exports = [];
 				if (callback) {
@@ -365,6 +364,20 @@
 			});		
 		})
         return deferred;
+		
+		function iterator(isDep) {
+			var context = this;
+			_forEach(context, function(v, i) {
+				// Deps's base is document's baseURI
+				context[i] = resolve(v, isDep ? baseURI : baseuri);
+				// Filter out url in settings.deps
+				if (isDep && deps[baseuri] !== undefined) return;
+				var module = cache[context[i]];
+				deferreds.push(module || _createModule(context[i]));
+			});
+
+			return deferreds.length ? deferreds : [true];
+		}
     }
 
     /**
@@ -403,7 +416,6 @@
             ext = pathname.substring(pathname.lastIndexOf('.') + 1 || pathname.length);
             type = moduleType[ext];
         }
-
         module = Module({uri: uri});
         module.type = type;
         module.status = 1;
@@ -751,7 +763,7 @@
         a = null;
         return result;
     }    
-
+	
     /**
      *  API
      */
