@@ -1,14 +1,14 @@
 {
-  "name": "jnode",
+  "name": "jnode-require",
   "version": "0.1.0",
-  "description": "A CMD module loader",
+  "description": "A module loader support CMD and AMD",
   "main": "jnode.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/1024bit/jNode.git"
+    "url": "https://github.com/1024bit/jnode.git"
   },
   "keywords": [
     "js",
@@ -19,6 +19,6 @@
   "author": "Cherish Peng",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/1024bit/jNode/issues"
+    "url": "https://github.com/1024bit/jnode/issues"
   }
 }
