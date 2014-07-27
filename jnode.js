@@ -2,7 +2,7 @@
  *  jNode, a CMD and AMD compatible module loader
  *
  *  Usage:
- *  jNode.set({paths: {}, alias: {}});
+ *  jNode.set({paths: {}, alias: {}, caches: [], vars: {}});
  *  jNode.require('uri1, uri2', callbcak);
  *  
  *  Copyright(c) 2014 vip.com
@@ -12,7 +12,7 @@
 (function(global) {
     var
     jNode = {},
-    defaults = {paths: {}, alias: {}, deps: [], vars: {}},
+    defaults = {paths: {}, alias: {}, caches: [], vars: {}},
     slice = [].slice,
     toString = Object.prototype.toString, 
     settings = _extend({}, defaults),
@@ -25,7 +25,6 @@
     transports = {},
     router = {},
 	vars = {}, 
-	deps = {}, 
     eventRegistry = {}, 
     rules = {require: ''}, 
 
@@ -63,21 +62,13 @@
     
 	// Set jNode setting
     function _set(k, v) {
-        var _deps = [];
 		if ('object' === typeof k) {
             _extend(settings, k);
-			if (k.deps) _deps = k.deps;
 		} else if ('object' === typeof v && 'object' === typeof settings[k]) {
             settings[k] = _extend(settings[k], v);
-			if (k === 'deps')  _deps = v;
 		} else { 
             settings[k] = v;
 		}
-			
-		// Memo
-		_forEach(_deps, function(v, i) {
-			deps[resolve(v)] = i;
-		});
     }    
     
     // Get jNode setting
@@ -212,7 +203,6 @@
         fire.call(null, event, uri); // It's not recommened to use the jNode.fire is exported to external
         if (typeof event.result === 'string')
             uri = event.result;
-
         return uri;
     }
 
@@ -297,7 +287,9 @@
             fire.call(null, EVENT_MODULE_EXECUTE, module, exports || module.exports);           
 
             // Which dependencies defer to request at factory runtime
+			
             delayWaitings = dependencies.length - waitings;
+
             _when(delayWaitings ? _require.call(module, dependencies.slice(waitings)) : true).always(function() {
                 if (exports) module.exports = exports;
                 module.status = 4;
@@ -343,35 +335,27 @@
         if (typeof type === 'string')
             type = type.split(RE_DELIMITER_COMMA);
         
-        
         var
         cache = Module.instances,
-        baseuri = this.uri, 
-        deferreds = [];
-        deferred = _when(function() {
-			return iterator.call(settings.deps, true);	
+        baseuri = this.uri;
+        
+		return _when(function() {
+			return iterator.call(settings.caches, true).concat(iterator.call(uri));
 		}).always(function() {
-			_when(function() {
-				return iterator.call(uri);
-			}).always(function() {
-				var exports = [];
-				if (callback) {
-					_forEach(slice.call(arguments, settings.deps.length), function() {
-						exports.push(this.exports);
-					});
-					callback.apply(this, exports);
-				}
-			});		
-		})
-        return deferred;
-		
+			var exports = [];
+			if (callback) {
+				_forEach(slice.call(arguments, settings.caches.length), function() {
+					exports.push(this.exports);
+				});
+				callback.apply(this, exports);
+			}
+		});		
+
 		function iterator(isDep) {
-			var context = this;
+			var context = this, deferreds = [];
 			_forEach(context, function(v, i) {
-				// Deps's base is document's baseURI
+				// Caches's base is document's baseURI
 				context[i] = resolve(v, isDep ? baseURI : baseuri);
-				// Filter out url in settings.deps
-				if (isDep && deps[baseuri] !== undefined) return;
 				var module = cache[context[i]];
 				deferreds.push(module || _createModule(context[i]));
 			});
