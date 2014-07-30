@@ -5,8 +5,8 @@
  *  jNode.set({paths: {}, alias: {}, caches: [], vars: {}});
  *  jNode.require('uri1, uri2', callbcak);
  *  
- *  Copyright(c) 2014 vip.com
- *  Copyright(c) 2014 Cherish Peng<cherish.peng@vipshop.com>
+ *  Copyright(c) 2014 xxx.com
+ *  Copyright(c) 2014 Cherish Peng<cherish.peng@xxx.com>
  *  MIT Licensed   
  */
 (function(global) {
