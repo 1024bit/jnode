@@ -5,8 +5,8 @@
  *  jNode.set({paths: {}, alias: {}, caches: [], vars: {}});
  *  jNode.require('uri1, uri2', callbcak);
  *  
- *  Copyright(c) 2014 xxx.com
- *  Copyright(c) 2014 Cherish Peng<cherish.peng@xxx.com>
+ *  Copyright(c) 2014 xx.com
+ *  Copyright(c) 2014 Cherish Peng<cherish.peng@xx.com>
  *  MIT Licensed   
  */
 (function(global) {
@@ -40,6 +40,7 @@
     RE_TRIM = /^\s*|\s*$/gm, 
     RE_LEADING_SLASH = /^\//,
 	RE_VARS = /\{(.+)\}/g, 
+	RE_LINE_NUMBER = /\:\d+\:\d+$/,
 
     //jNode events
     EVENT_MODULE_RESOLVE = 'moduleresolve', // When call resolve
@@ -90,7 +91,7 @@
         name = '(' + names.join('|') + ')';
         RE_DEPENDENCIES = new RegExp(name + RE_DEPENDENCIES_BODY, 'mg');        
     }
-    
+
     // Add default transport
     // You can also refer below structure to add other transports, eg: audio, video, archives, office, adobe etc
     _forEach({ 'script': 'script', 'style': 'link', 'image': 'img', 'document': 'iframe' }, function(element, type) {
@@ -164,8 +165,9 @@
 
 		// Begin with path
 		i = uri.indexOf('/');
-		if ((path = settings.paths[uri.substring(0, ~i ? i : uri.length)]))
-			uri = path + uri.substring(i);
+		// >IE8 will treat '' as a valid object key
+		//if ((path = settings.paths[uri.substring(0, ~i ? i : uri.length)]))
+		//	uri = path + uri.substring(i);
 
 		orig = base.href;
 		base.href = baseUri; // A trick for getting a URL's component
@@ -179,18 +181,17 @@
 			a1.pathname += '.js';
 			a1.href += '.js';
 		}
-		
 		// IE always return ":" as the default value
 		if (~a1.href.indexOf('//')) { // Absolute uri
 			uri = a1.href;
 		} else {
 			if (!router[baseUri])
 				router[baseUri] = {};
-
 			if (!router[baseUri][uri]) {
 				if (!dynamicURIResolveSupported) { // ~IE7
 					a0 = _parse(baseUri);
-					i = a0.pathname.lastIndexOf('/');
+					// Relative path
+					if (i) i = a0.pathname.lastIndexOf('/');
 					a1.href = a0.protocol + '//' + a0.host + a0.pathname.substring(0, ~i ? i : undefined) + a1.pathname;
 				}
 				router[baseUri][uri] = a1.href;
@@ -209,13 +210,14 @@
     // Define a module and extract the dependencies
     function define(id, dependencies, factory) {
         var
-        cache = Module.instances, alias = {},
+        cache = Module.instances, alias = {}, _id, 
         waitings, delayWaitings, module, uri, code, event, rule, match;
 
         if ('object' === typeof id) {
             // define({}), define([], factory)
+			_id = id;
             factory = dependencies || function() {
-                return id;
+                return _id;
             };
             dependencies = (dependencies && id) || undefined;
             id = undefined;
@@ -229,8 +231,7 @@
 			factory = dependencies;
 			dependencies = undefined;	
 		}
-
-        uri = _getCurrentScript().src;
+        uri = _getCurrentScriptSrc();
         if (id) {
             uri = _parse(uri);
             uri = uri.protocol + '//' + uri.host + uri.pathname.substring(0, uri.pathname.lastIndexOf('/') + 1) + id.replace(RE_LEADING_SLASH, '') + '.js' + uri.search + uri.hash;
@@ -282,7 +283,7 @@
             exports = factory(function() {
                 return require.apply(module, arguments);
             }, module.exports, module);
-            
+
             // Fire "moduleexecute" event
             fire.call(null, EVENT_MODULE_EXECUTE, module, exports || module.exports);           
 
@@ -344,7 +345,7 @@
 		}).always(function() {
 			var exports = [];
 			if (callback) {
-				_forEach(slice.call(arguments, settings.caches.length), function() {
+				_forEach(slice.call(arguments, settings.caches.length || 1), function() {
 					exports.push(this.exports);
 				});
 				callback.apply(this, exports);
@@ -432,51 +433,52 @@
 
         for (trigger in map) {
             event = map[trigger];
-            _(trigger);
-            function _(trigger) {
-                // Events: done, fail
-                deferred[event] = promised[event] = function (callback) {
-                    _addCallback.call(this, trigger, callback);
-                    return this;
-                };
-                //  Trigger: resolve, reject
-                deferred[trigger] = function() {
-                    var
-                    reject = (trigger === 'reject'),
-                    resolve = !reject,
-                    deferreds = this.deferreds,
-                    pending, always, queues, fn, i = 0;
+			// Events: done, fail
+			deferred[event] = promised[event] = (function (trigger) {
+				return function(callback) {
+					_addCallback.call(this, trigger, callback);
+					return this;
+				}
+			}(trigger));
+			//  Trigger: resolve, reject
+			deferred[trigger] = (function(trigger) {
+				return function() {
+					var
+					reject = (trigger === 'reject'),
+					resolve = !reject,
+					deferreds = this.deferreds,
+					pending, always, queues, fn, i = 0;
 
-                    if (deferreds) {
-                        for (; i < deferreds.length; i++) {
-                            if (!deferreds[i].state || deferreds[i].state() !== 'pending')
-                                continue;
-                            pending = true;
-                        }
-                        if (resolve && pending) {
-                            return;
-                        }
-                        if (reject && pending) {
-                            queues = callbacks.reject;
-                        }
-                    }
+					if (deferreds) {
+						for (; i < deferreds.length; i++) {
+							if (!deferreds[i].state || deferreds[i].state() !== 'pending')
+								continue;
+							pending = true;
+						}
+						if (resolve && pending) {
+							return;
+						}
+						if (reject && pending) {
+							queues = callbacks.reject;
+						}
+					}
 
-                    if (!deferreds || !pending) {
-                        always = true;
-                        queues = callbacks[trigger].concat(callbacks.always);
-                    }
-                    // State: resolved or rejected
-                    if (!deferreds || always) {
-                        state = trigger + (reject ? 'ed' : 'd');
-                    }                     
+					if (!deferreds || !pending) {
+						always = true;
+						queues = callbacks[trigger].concat(callbacks.always);
+					}
+					// State: resolved or rejected
+					if (!deferreds || always) {
+						state = trigger + (reject ? 'ed' : 'd');
+					}                     
 
-                    callbacks[trigger] = [];
-                    always && (callbacks.always = []);
-                    while ((fn = queues.shift())) {
-                        fn.apply(this, arguments);
-                    }
-                };
-            }
+					callbacks[trigger] = [];
+					always && (callbacks.always = []);
+					while ((fn = queues.shift())) {
+						fn.apply(this, arguments);
+					}
+				}
+			}(trigger));
         }
         proto = {
             always: function (callback) { 
@@ -649,30 +651,19 @@
 
     // Returns the <script> element whose script is currently being processed
     // https://gist.github.com/6228063.git
-    function _getCurrentScript() {
+    function _getCurrentScriptSrc() {
         // document.currentScript polyfill + improvements
         var
-        // Only for head
+        // Only for head, jNode always append the created script to head
         scripts = head.getElementsByTagName('script'),
         _currentScript = document.currentScript;
 
         return actualScript();
         
-        // Return script object based off of src
-        function getScriptFromURL(url) {
-            var i = 0, script;
-
-            for (; i < scripts.length; i++) {
-                script = scripts[i];
-                if (script.src === url || (script.readyState && script.readyState === 'interactive'))
-                    return script;
-            }
-            return undefined;
-        }
         function actualScript() {
             if (_currentScript)
-                return _currentScript;
-            var stack, at, index;
+                return _currentScript.src;
+            var stack, at, index, script;
 
             try {
                 omgwtf; // Oh my god! What the fuck!
@@ -686,14 +677,34 @@
                  */
                 stack = e.stack;
             }
-            if (stack) {
-                at = stack.indexOf(' at ') !== -1 ? ' at ' : '@';
-                index = stack.indexOf(at);
-                while (index !== -1)
-                    stack = stack.substring(index) + at.length;
-                stack = stack.substring(0, stack.indexOf(':'));
-            }
-            return getScriptFromURL(stack);
+
+			if (!stack) {
+				for (index in scripts) {
+					script = scripts[index];
+					if (script.readyState && script.readyState === 'interactive') {
+						return script.src;
+					}					
+				}
+				//script = scripts[scripts.length - 1];
+				//if (script.getAttribute.length !== undefined) {
+				//	return script.src;
+				//}
+				//return script.getAttribute('src', -1);
+			}
+			
+			at = stack.indexOf(' at ') !== -1 ? ' at ' : '@';
+			stack = stack.substring(stack.lastIndexOf(at) + at.length);
+			index = stack.indexOf('(');
+			if (index !== -1) {
+				stack = stack.slice(index + 1, stack.lastIndexOf(')'))
+			}
+			if (at === '@') {
+				stack = stack.slice(0, stack.lastIndexOf(':'));
+			} else {
+				stack = stack.replace(RE_LINE_NUMBER, '');
+			}
+
+            return stack;
         }
     }  
     
@@ -739,15 +750,19 @@
     
     // Parse a URL and return its components
     function _parse(uri) {
-        var a = document.createElement('a'), leadslash, result;
+        var a = document.createElement('a'), leadslash, result, host;
         a.href = uri;
+		host = a.host;
         // In IE, without `/` prefix for `A` element's Only-Readable pathname property
         leadslash = (a.pathname.indexOf('/') !== 0);
-        result = { href: a.href, protocol: a.protocol, host: a.host, pathname: (leadslash ? ('/' + a.pathname) : a.pathname), search: a.search, hash: a.hash };
+		// IE always return 80 when the port is null
+		if (a.port == 80) 
+			host = a.hostname;
+        result = { href: a.href, protocol: a.protocol, host: host, pathname: (leadslash ? ('/' + a.pathname) : a.pathname), search: a.search, hash: a.hash };
         a = null;
         return result;
     }    
-	
+
     /**
      *  API
      */
