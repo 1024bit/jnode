@@ -57,8 +57,9 @@
 
 	// Parse {var} in url use the vars setting
     function _parseVars(match) {
-		return vars[match] 
-			|| (vars[match] = match.replace(RE_VARS, function(m, m1) { return settings.vars[m1]; }));	
+		return vars[match] || (vars[match] = match.replace(RE_VARS, function(m, m1) {
+			return settings.vars[m1]; 
+		}));	
 	}
     
 	// Set jNode setting
@@ -718,8 +719,9 @@
             source = sources[i];
             for (k in source) {
                 v = source[k];
-                typeto = toString.call(v);
-                typefrom = toString.call(target[k]);
+				// <=IE8, Object.prototype.toString.call(undefined|null) return `[object Undefined|Null]`
+                typeto = (v === undefined || v === null) ? v : toString.call(v);
+				typefrom = (target[k] === undefined || v === null) ? v : toString.call(target[k]);
                 if ('object' === typeof v) {
                     if ('object' === typeof target[k]) {
                         if (typeto === typefrom) {
@@ -755,8 +757,8 @@
 		host = a.host;
         // In IE, without `/` prefix for `A` element's Only-Readable pathname property
         leadslash = (a.pathname.indexOf('/') !== 0);
-		// IE always return 80 when the port is null
-		if (a.port == 80) 
+		// IE always return 80 or 443(https) when the port is null
+		if (a.port == 80 || a.port == 443) 
 			host = a.hostname;
         result = { href: a.href, protocol: a.protocol, host: host, pathname: (leadslash ? ('/' + a.pathname) : a.pathname), search: a.search, hash: a.hash };
         a = null;
