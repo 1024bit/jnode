@@ -13,8 +13,9 @@
     var
     jNode = {},
     defaults = {paths: {}, alias: {}, caches: [], vars: {}},
-    slice = [].slice,
-    toString = Object.prototype.toString, 
+    _define, 
+	slice = [].slice, 
+	toString = Object.prototype.toString, 
     settings = _extend({}, defaults),
     moduleType = {
         'js': 'script', 
@@ -31,7 +32,7 @@
     head = document.getElementsByTagName('head')[0],
     base = document.getElementsByTagName('base')[0] || head.appendChild(document.createElement('base')),
     baseURI = document.baseURI || base.href || document.URL,
-    dynamicURIResolveSupported = (_parse('').href !== ''),
+    dynamicURIResolveSupported = (_parse('').href !== ''), 
 
     // RegExp
     RE_DEPENDENCIES, 
@@ -40,7 +41,6 @@
     RE_TRIM = /^\s*|\s*$/gm, 
     RE_LEADING_SLASH = /^\//,
 	RE_VARS = /\{(.+)\}/g, 
-	RE_LINE_NUMBER = /\:\d+\:\d+$/,
 
     //jNode events
     EVENT_MODULE_RESOLVE = 'moduleresolve', // When call resolve
@@ -119,12 +119,13 @@
                 }
             };
             function callback() {
-                var 
+				var 
                 IFRAME = (object.tagName.toUpperCase() === 'IFRAME'), 
                 IMG = (object.tagName.toUpperCase() === 'IMG'), 
                 JSON = ~object.src.indexOf('.json');
 
                 if (!object.readyState || /loaded|complete/.test(object.readyState)) {
+					
                     if (IFRAME) {
                         var body = object.contentWindow.document.body;
                         res = body.innerText || body.textContent;
@@ -133,7 +134,10 @@
                     } else if (IMG)
                         module.exports = object;
                     // 404 error, Non-Standard CMD module or Non-JS module
-                    if (module.status === 1) {
+					if (_define) {
+						_define(module.uri);
+						_define = undefined;
+                    } else if (1 === module.status) {
                         module.status = 4;
                         module.statusText = 'COMPLETE';
                         module.resolve(module);
@@ -209,12 +213,9 @@
     }
 
     // Define a module and extract the dependencies
-    function define(id, dependencies, factory) {
-        var
-        cache = Module.instances, alias = {}, _id, 
-        waitings, delayWaitings, module, uri, code, event, rule, match;
-
-        if ('object' === typeof id) {
+	function define(id, dependencies, factory) {
+		var _id, uri;
+		if ('object' === typeof id) {
             // define({}), define([], factory)
 			_id = id;
             factory = dependencies || function() {
@@ -230,80 +231,91 @@
         } else if ('function' === typeof dependencies) {
 			// define(id, factory)
 			factory = dependencies;
-			dependencies = undefined;	
+			dependencies = undefined;
 		}
-        uri = _getCurrentScriptSrc();
-        if (id) {
-            uri = _parse(uri);
-            uri = uri.protocol + '//' + uri.host + uri.pathname.substring(0, uri.pathname.lastIndexOf('/') + 1) + id.replace(RE_LEADING_SLASH, '') + '.js' + uri.search + uri.hash;
-            // In fact, a module id is an alias
-            alias[id] = uri;
-            _set('alias', alias);
-        }
-        module = cache[uri] || Module({uri: uri});
-        // Repeated define
-        if (module.status === 2) return;
+		_define = function(uri) { 
+			var
+			cache = Module.instances, alias = {}, 
+			waitings, delayWaitings, module, code, event, rule, match;
+			if (id && !settings.alias[id]) {
+				uri = _parse(uri);
+				uri = uri.protocol + '//' + uri.host + uri.pathname.substring(0, uri.pathname.lastIndexOf('/') + 1) + id.replace(RE_LEADING_SLASH, '') + '.js' + uri.search + uri.hash;
+				// In fact, a module id is an alias
+				alias[id] = uri;
+				_set('alias', alias);
+			}
+			module = cache[uri] || Module({uri: uri});
+			// Repeated define
+			if (module.status === 2) return;
 
-        // Fire "define" event, may be you want to customize the behavior of "define"
-        // window.fn = function() { console.log(1); };
-        // (function(fn){ this[fn](); }).call(null, ['fn']) will output "1" in Chrome
-        if (!fire.call({}, EVENT_MODULE_DEFINE, id, dependencies, factory))
-            return;
-        // factory source code
-        code = factory.toString();
-        // Dependencies is undefined
-        if (undefined === dependencies) {
-			dependencies = [];
-            // Fire "beforemoduledependenciesready" event, may be you want to add some alias to "require"
-            event = Event(EVENT_BEFORE_MODULE_PREFETCH);
-            fire.call(null, event, code);
-            // Extract module dependencies
-            while (RE_DEPENDENCIES.exec(code)) {
-                rule = rules[RegExp.$1];
-				match = ('function' === typeof rule) ? rule(RegExp.$2) : RegExp.$2;
-                dependencies.push(_parseVars(match));
-            }
-            if (event.result) {
-                dependencies = dependencies.concat(event.result);
-            }
-        }
-        module.status = 2;
-        module.statusText = 'LOADED';
-        module.id = id;
-        // Dependencies is passed as reference
-        module.dependencies = dependencies;
+			// Fire "define" event, may be you want to customize the behavior of "define"
+			// window.fn = function() { console.log(1); };
+			// (function(fn){ this[fn](); }).call(null, ['fn']) will output "1" in Chrome
+			if (!fire.call({}, EVENT_MODULE_DEFINE, id, dependencies, factory))
+				return;
+			// factory source code
+			code = factory.toString();
+			// Dependencies is undefined
+			if (undefined === dependencies) {
+				dependencies = [];
+				// Fire "beforemoduledependenciesready" event, may be you want to add some alias to "require"
+				event = Event(EVENT_BEFORE_MODULE_PREFETCH);
+				fire.call(null, event, code);
+				// Extract module dependencies
+				while (RE_DEPENDENCIES.exec(code)) {
+					rule = rules[RegExp.$1];
+					match = ('function' === typeof rule) ? rule(RegExp.$2) : RegExp.$2;
+					dependencies.push(_parseVars(match));
+				}
+				if (event.result) {
+					dependencies = dependencies.concat(event.result);
+				}
+			}
+			module.status = 2;
+			module.statusText = 'LOADED';
+			module.id = id;
+			// Dependencies is passed as reference
+			module.dependencies = dependencies;
 
-        // Require dependencies, those are concurrent requests
-        // Ignore the failed Require
-        waitings = dependencies.length;
-        _when(waitings ? _require.call(module, dependencies) : true).always(function() {
-            var exports;
-            module.status = 3;
-            module.statusText = 'INTERACTIVE';
-            
-            exports = factory(function() {
-                return require.apply(module, arguments);
-            }, module.exports, module);
+			// Require dependencies, those are concurrent requests
+			// Ignore the failed Require
+			waitings = dependencies.length;	
+			_when(waitings ? _require.call(module, dependencies) : true).always(function() {
+				var exports;
+				module.status = 3;
+				module.statusText = 'INTERACTIVE';
+				
+				exports = factory(function() {
+					return require.apply(module, arguments);
+				}, module.exports, module);
 
-            // Fire "moduleexecute" event
-            fire.call(null, EVENT_MODULE_EXECUTE, module, exports || module.exports);           
+				// Fire "moduleexecute" event
+				fire.call(null, EVENT_MODULE_EXECUTE, module, exports || module.exports);           
 
-            // Which dependencies defer to request at factory runtime
-			
-            delayWaitings = dependencies.length - waitings;
+				// Which dependencies defer to request at factory runtime
+				
+				delayWaitings = dependencies.length - waitings;
 
-            _when(delayWaitings ? _require.call(module, dependencies.slice(waitings)) : true).always(function() {
-                if (exports) module.exports = exports;
-                module.status = 4;
-                module.statusText = 'COMPLETE';
-                module.resolve(module);
-            });
+				_when(delayWaitings ? _require.call(module, dependencies.slice(waitings)) : true).always(function() {
+					if (exports) module.exports = exports;
+					module.status = 4;
+					module.statusText = 'COMPLETE';
+					module.resolve(module);
+				});
 
-            // Fire "ready" event, then you can depend on this module securely
-            fire.call(null, EVENT_MODULE_READY, module);
-        });
-    }
-     
+				// Fire "ready" event, then you can depend on this module securely
+				fire.call(null, EVENT_MODULE_READY, module);
+			});
+		};	
+		
+		// For module have alias or browser which's current script is available
+		uri = (id && settings.alias[id]) ? resolve(settings.alias[id], baseURI) : _getCurrentScriptSrc();
+		if (uri) { 
+			_define(uri);
+			_define = undefined;
+		}
+	}
+    
     // https://github.com/cmdjs/specification/blob/master/draft/module.md
     define.cmd = {amd: true};
     // https://github.com/amdjs/amdjs-api/blob/master/AMD.md#defineamd-property-
@@ -406,7 +418,6 @@
         module.type = type;
         module.status = 1;
         module.statusText = 'LOADING';
-
         for (; i < transports[type].length; i++) {
             transport = transports[type][i](module);
             transport.send();
@@ -649,66 +660,7 @@
             return this;
         };
     });
-
-    // Returns the <script> element whose script is currently being processed
-    // https://gist.github.com/6228063.git
-    function _getCurrentScriptSrc() {
-        // document.currentScript polyfill + improvements
-        var
-        // Only for head, jNode always append the created script to head
-        scripts = head.getElementsByTagName('script'),
-        _currentScript = document.currentScript;
-
-        return actualScript();
-        
-        function actualScript() {
-            if (_currentScript)
-                return _currentScript.src;
-            var stack, at, index, script;
-
-            try {
-                omgwtf; // Oh my god! What the fuck!
-            } catch (e) {
-                /**
-                 * e.stack last line:
-                 * chrome: at src:line:number
-                 * firefox: @src:line
-                 * opera: @src:line
-                 * IE10: at Global code (src:line:number)
-                 */
-                stack = e.stack;
-            }
-
-			if (!stack) {
-				for (index in scripts) {
-					script = scripts[index];
-					if (script.readyState && script.readyState === 'interactive') {
-						return script.src;
-					}					
-				}
-				//script = scripts[scripts.length - 1];
-				//if (script.getAttribute.length !== undefined) {
-				//	return script.src;
-				//}
-				//return script.getAttribute('src', -1);
-			}
-			
-			at = stack.indexOf(' at ') !== -1 ? ' at ' : '@';
-			stack = stack.substring(stack.lastIndexOf(at) + at.length);
-			index = stack.indexOf('(');
-			if (index !== -1) {
-				stack = stack.slice(index + 1, stack.lastIndexOf(')'))
-			}
-			if (at === '@') {
-				stack = stack.slice(0, stack.lastIndexOf(':'));
-			} else {
-				stack = stack.replace(RE_LINE_NUMBER, '');
-			}
-
-            return stack;
-        }
-    }  
-    
+	
     // A simple implementing of jQuery.extend
     function _extend(target) {
         var
@@ -764,6 +716,30 @@
         a = null;
         return result;
     }    
+	
+	// Returns the <script> element whose script is currently being processed
+	// https://gist.github.com/1024bit/2c55e29b4da8c0231576
+	function _getCurrentScriptSrc() {
+		// document.currentScript polyfill + improvements
+		var
+		// Only for head, jNode always append the created script to head
+		scripts = head.getElementsByTagName('script'),
+		_currentScript = document.currentScript;
+	 
+		return actualScript();
+	 
+		function actualScript() {
+			if (_currentScript)
+				return _currentScript.src;
+			var index, script;
+			for (index in scripts) {
+				script = scripts[index];
+				if (script.readyState && script.readyState === 'interactive') {
+					return script.src;
+				}
+			}	 
+		}
+	}	
 
     /**
      *  API
